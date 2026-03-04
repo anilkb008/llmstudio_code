@@ -9,30 +9,28 @@ struct ReadFileInput: Codable {
     let path: String
     let startLine: Int?
     let endLine: Int?
-
     enum CodingKeys: String, CodingKey {
-        case path
-        case startLine = "start_line"
-        case endLine = "end_line"
+        case path; case startLine = "start_line"; case endLine = "end_line"
     }
 }
 
-struct WriteFileInput: Codable {
-    let path: String
-    let content: String
-}
+struct WriteFileInput: Codable { let path: String; let content: String }
+struct ListDirectoryInput: Codable { let path: String? }
 
-struct ListDirectoryInput: Codable {
-    let path: String?
+struct EditFileInput: Codable {
+    let path: String
+    let oldString: String
+    let newString: String
+    enum CodingKeys: String, CodingKey {
+        case path; case oldString = "old_string"; case newString = "new_string"
+    }
 }
 
 struct RunShellInput: Codable {
     let command: String
     let workingDirectory: String?
-
     enum CodingKeys: String, CodingKey {
-        case command
-        case workingDirectory = "working_directory"
+        case command; case workingDirectory = "working_directory"
     }
 }
 
@@ -41,26 +39,13 @@ struct SearchFilesInput: Codable {
     let directory: String?
     let filePattern: String?
     let maxResults: Int?
-
     enum CodingKeys: String, CodingKey {
-        case pattern
-        case directory
-        case filePattern = "file_pattern"
-        case maxResults = "max_results"
+        case pattern; case directory; case filePattern = "file_pattern"; case maxResults = "max_results"
     }
 }
 
-struct CreateDirectoryInput: Codable {
-    let path: String
-}
-
-struct DeleteFileInput: Codable {
-    let path: String
-}
-
-struct GetFileInfoInput: Codable {
-    let path: String
-}
+struct CreateDirectoryInput: Codable { let path: String }
+struct GetFileInfoInput: Codable { let path: String }
 
 // MARK: - Coding Tool Executor
 
@@ -73,219 +58,172 @@ class CodingToolExecutor {
         self.workspacePath = workspacePath
     }
 
-    // MARK: - Tool Schemas
+    // MARK: - All Tool Schemas
 
     var allToolSchemas: [ToolSpec] {
-        return [
-            readFileSchema,
-            writeFileSchema,
-            listDirectorySchema,
-            runShellSchema,
-            searchFilesSchema,
-            createDirectorySchema,
-            getFileInfoSchema,
-        ]
-    }
-
-    private var readFileSchema: ToolSpec {
         [
-            "type": "function",
-            "function": [
-                "name": "read_file",
-                "description": "Read the contents of a file. Returns file content with line numbers. Use this before modifying any file.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "path": [
-                            "type": "string",
-                            "description": "Path to the file (relative to workspace or absolute)",
-                        ] as ToolSpec,
-                        "start_line": [
-                            "type": "integer",
-                            "description": "Starting line number (1-based). Omit to read from beginning.",
-                        ] as ToolSpec,
-                        "end_line": [
-                            "type": "integer",
-                            "description": "Ending line number (1-based). Omit to read to end.",
-                        ] as ToolSpec,
-                    ] as ToolSpec,
-                    "required": ["path"],
-                ] as ToolSpec,
-            ] as ToolSpec,
+            readFileSchema, editFileSchema, writeFileSchema,
+            listDirectorySchema, runShellSchema, searchFilesSchema,
+            createDirectorySchema, getFileInfoSchema,
         ]
     }
 
-    private var writeFileSchema: ToolSpec {
-        [
-            "type": "function",
-            "function": [
-                "name": "write_file",
-                "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Always read the file first if it exists.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "path": [
-                            "type": "string",
-                            "description": "Path to the file (relative to workspace or absolute)",
-                        ] as ToolSpec,
-                        "content": [
-                            "type": "string",
-                            "description": "The complete content to write to the file",
-                        ] as ToolSpec,
-                    ] as ToolSpec,
-                    "required": ["path", "content"],
-                ] as ToolSpec,
-            ] as ToolSpec,
-        ]
-    }
+    // MARK: - Schemas
 
-    private var listDirectorySchema: ToolSpec {
-        [
-            "type": "function",
-            "function": [
-                "name": "list_directory",
-                "description": "List the contents of a directory. Returns files and subdirectories. Use to explore the workspace structure.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "path": [
-                            "type": "string",
-                            "description": "Directory path. Defaults to workspace root if omitted.",
-                        ] as ToolSpec,
-                    ] as ToolSpec,
-                    "required": [] as [String],
+    private var readFileSchema: ToolSpec {[
+        "type": "function",
+        "function": [
+            "name": "read_file",
+            "description": "Read the contents of a file with line numbers. Always read a file before modifying it.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "path": ["type": "string", "description": "File path relative to workspace or absolute"] as ToolSpec,
+                    "start_line": ["type": "integer", "description": "First line to read (1-based). Omit to read from start."] as ToolSpec,
+                    "end_line": ["type": "integer", "description": "Last line to read (1-based). Omit to read to end."] as ToolSpec,
                 ] as ToolSpec,
+                "required": ["path"],
             ] as ToolSpec,
-        ]
-    }
+        ] as ToolSpec,
+    ]}
 
-    private var runShellSchema: ToolSpec {
-        [
-            "type": "function",
-            "function": [
-                "name": "run_shell_command",
-                "description": "Execute a shell command and return stdout/stderr. Use for running tests, builds, git commands, installing packages, etc.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "command": [
-                            "type": "string",
-                            "description": "The shell command to execute",
-                        ] as ToolSpec,
-                        "working_directory": [
-                            "type": "string",
-                            "description": "Working directory for the command. Defaults to workspace root.",
-                        ] as ToolSpec,
-                    ] as ToolSpec,
-                    "required": ["command"],
+    private var editFileSchema: ToolSpec {[
+        "type": "function",
+        "function": [
+            "name": "edit_file",
+            "description": "Make a targeted edit to an existing file by replacing exact text. Preferred over write_file for modifying existing files. The old_string must match exactly (including whitespace and indentation). If the string appears multiple times, only the first occurrence is replaced.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "path": ["type": "string", "description": "Path to the file to edit"] as ToolSpec,
+                    "old_string": ["type": "string", "description": "The exact text to find and replace. Must match the file content exactly including whitespace."] as ToolSpec,
+                    "new_string": ["type": "string", "description": "The replacement text. Can be empty string to delete the old_string."] as ToolSpec,
                 ] as ToolSpec,
+                "required": ["path", "old_string", "new_string"],
             ] as ToolSpec,
-        ]
-    }
+        ] as ToolSpec,
+    ]}
 
-    private var searchFilesSchema: ToolSpec {
-        [
-            "type": "function",
-            "function": [
-                "name": "search_files",
-                "description": "Search for a text pattern across files in the workspace. Returns matching lines with file paths and line numbers.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "pattern": [
-                            "type": "string",
-                            "description": "Search pattern (supports basic regex)",
-                        ] as ToolSpec,
-                        "directory": [
-                            "type": "string",
-                            "description": "Directory to search in. Defaults to workspace root.",
-                        ] as ToolSpec,
-                        "file_pattern": [
-                            "type": "string",
-                            "description": "Glob pattern for files to include, e.g. '*.swift', '*.py'. Defaults to all files.",
-                        ] as ToolSpec,
-                        "max_results": [
-                            "type": "integer",
-                            "description": "Maximum number of matching lines to return. Defaults to 50.",
-                        ] as ToolSpec,
-                    ] as ToolSpec,
-                    "required": ["pattern"],
+    private var writeFileSchema: ToolSpec {[
+        "type": "function",
+        "function": [
+            "name": "write_file",
+            "description": "Write complete content to a file. Use for creating NEW files. For modifying existing files, prefer edit_file instead.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "path": ["type": "string", "description": "File path relative to workspace or absolute"] as ToolSpec,
+                    "content": ["type": "string", "description": "Complete file content to write"] as ToolSpec,
                 ] as ToolSpec,
+                "required": ["path", "content"],
             ] as ToolSpec,
-        ]
-    }
+        ] as ToolSpec,
+    ]}
 
-    private var createDirectorySchema: ToolSpec {
-        [
-            "type": "function",
-            "function": [
-                "name": "create_directory",
-                "description": "Create a new directory, including all intermediate parent directories.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "path": [
-                            "type": "string",
-                            "description": "Path of the directory to create",
-                        ] as ToolSpec,
-                    ] as ToolSpec,
-                    "required": ["path"],
+    private var listDirectorySchema: ToolSpec {[
+        "type": "function",
+        "function": [
+            "name": "list_directory",
+            "description": "List contents of a directory. Use to explore project structure.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "path": ["type": "string", "description": "Directory path. Defaults to workspace root."] as ToolSpec,
                 ] as ToolSpec,
+                "required": [] as [String],
             ] as ToolSpec,
-        ]
-    }
+        ] as ToolSpec,
+    ]}
 
-    private var getFileInfoSchema: ToolSpec {
-        [
-            "type": "function",
-            "function": [
-                "name": "get_file_info",
-                "description": "Get metadata about a file or directory: size, modification date, type, permissions.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "path": [
-                            "type": "string",
-                            "description": "Path to the file or directory",
-                        ] as ToolSpec,
-                    ] as ToolSpec,
-                    "required": ["path"],
+    private var runShellSchema: ToolSpec {[
+        "type": "function",
+        "function": [
+            "name": "run_shell_command",
+            "description": "Execute a shell command. Use for: swift build/test, git commands, ls, cat, find, grep, npm, etc. The working directory defaults to the workspace root.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "command": ["type": "string", "description": "Shell command to run"] as ToolSpec,
+                    "working_directory": ["type": "string", "description": "Override working directory (relative or absolute). Default: workspace root."] as ToolSpec,
                 ] as ToolSpec,
+                "required": ["command"],
             ] as ToolSpec,
-        ]
-    }
+        ] as ToolSpec,
+    ]}
 
-    // MARK: - Tool Execution
+    private var searchFilesSchema: ToolSpec {[
+        "type": "function",
+        "function": [
+            "name": "search_files",
+            "description": "Search for a text pattern across files using grep. Returns matching lines with file:line format.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "pattern": ["type": "string", "description": "Search pattern (regex supported)"] as ToolSpec,
+                    "directory": ["type": "string", "description": "Directory to search. Defaults to workspace root."] as ToolSpec,
+                    "file_pattern": ["type": "string", "description": "Glob for file types, e.g. '*.swift', '*.py'. Default: all files."] as ToolSpec,
+                    "max_results": ["type": "integer", "description": "Max matching lines to return. Default: 50."] as ToolSpec,
+                ] as ToolSpec,
+                "required": ["pattern"],
+            ] as ToolSpec,
+        ] as ToolSpec,
+    ]}
+
+    private var createDirectorySchema: ToolSpec {[
+        "type": "function",
+        "function": [
+            "name": "create_directory",
+            "description": "Create a directory (including all parent directories).",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "path": ["type": "string", "description": "Directory path to create"] as ToolSpec,
+                ] as ToolSpec,
+                "required": ["path"],
+            ] as ToolSpec,
+        ] as ToolSpec,
+    ]}
+
+    private var getFileInfoSchema: ToolSpec {[
+        "type": "function",
+        "function": [
+            "name": "get_file_info",
+            "description": "Get metadata about a file or directory: size, modification date, line count.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "path": ["type": "string", "description": "Path to the file or directory"] as ToolSpec,
+                ] as ToolSpec,
+                "required": ["path"],
+            ] as ToolSpec,
+        ] as ToolSpec,
+    ]}
+
+    // MARK: - Tool Dispatch
 
     func execute(name: String, arguments: String) async -> String {
         guard let argsData = arguments.data(using: .utf8) else {
-            return "Error: Invalid tool arguments JSON"
+            return "Error: invalid JSON arguments"
         }
         let decoder = JSONDecoder()
-
         do {
             switch name {
             case "read_file":
-                let input = try decoder.decode(ReadFileInput.self, from: argsData)
-                return try await executeReadFile(input)
+                return try await executeReadFile(decoder.decode(ReadFileInput.self, from: argsData))
+            case "edit_file":
+                return try await executeEditFile(decoder.decode(EditFileInput.self, from: argsData))
             case "write_file":
-                let input = try decoder.decode(WriteFileInput.self, from: argsData)
-                return try await executeWriteFile(input)
+                return try await executeWriteFile(decoder.decode(WriteFileInput.self, from: argsData))
             case "list_directory":
-                let input = try decoder.decode(ListDirectoryInput.self, from: argsData)
-                return try await executeListDirectory(input)
+                return try await executeListDirectory(decoder.decode(ListDirectoryInput.self, from: argsData))
             case "run_shell_command":
-                let input = try decoder.decode(RunShellInput.self, from: argsData)
-                return try await executeRunShell(input)
+                return try await executeRunShell(decoder.decode(RunShellInput.self, from: argsData))
             case "search_files":
-                let input = try decoder.decode(SearchFilesInput.self, from: argsData)
-                return try await executeSearchFiles(input)
+                return try await executeSearchFiles(decoder.decode(SearchFilesInput.self, from: argsData))
             case "create_directory":
-                let input = try decoder.decode(CreateDirectoryInput.self, from: argsData)
-                return try await executeCreateDirectory(input)
+                return try await executeCreateDirectory(decoder.decode(CreateDirectoryInput.self, from: argsData))
             case "get_file_info":
-                let input = try decoder.decode(GetFileInfoInput.self, from: argsData)
-                return try await executeGetFileInfo(input)
+                return try await executeGetFileInfo(decoder.decode(GetFileInfoInput.self, from: argsData))
             default:
                 return "Unknown tool: \(name)"
             }
@@ -296,212 +234,205 @@ class CodingToolExecutor {
 
     // MARK: - Path Resolution
 
-    private func resolvedURL(_ path: String) -> URL {
-        if path.hasPrefix("/") {
-            return URL(fileURLWithPath: path)
-        }
+    func resolvedURL(_ path: String) -> URL {
+        if path.hasPrefix("/") { return URL(fileURLWithPath: path) }
         let base = workspacePath ?? FileManager.default.homeDirectoryForCurrentUser
         return base.appendingPathComponent(path)
     }
 
-    // MARK: - Tool Implementations
+    // MARK: - Implementations
 
     private func executeReadFile(_ input: ReadFileInput) async throws -> String {
         let url = resolvedURL(input.path)
         let content = try String(contentsOf: url, encoding: .utf8)
         let lines = content.components(separatedBy: "\n")
-        let totalLines = lines.count
+        let total = lines.count
+        let s = max(1, input.startLine ?? 1)
+        let e = min(total, input.endLine ?? total)
+        guard s <= e else {
+            return "Error: line range \(s)-\(e) out of bounds (file has \(total) lines)"
+        }
+        let numbered = lines[(s - 1)...(e - 1)].enumerated().map { i, line in
+            String(format: "%4d\t%@", s + i, line)
+        }
+        var out = "File: \(url.relativePath(from: workspacePath)) (\(total) lines)"
+        if s > 1 || e < total { out += " · lines \(s)–\(e)" }
+        out += "\n" + numbered.joined(separator: "\n")
+        return out
+    }
 
-        let startLine = max(1, input.startLine ?? 1)
-        let endLine = min(totalLines, input.endLine ?? totalLines)
+    private func executeEditFile(_ input: EditFileInput) async throws -> String {
+        let url = resolvedURL(input.path)
+        let original = try String(contentsOf: url, encoding: .utf8)
 
-        guard startLine <= endLine, startLine <= totalLines else {
-            return "File has \(totalLines) lines. Requested range \(startLine)-\(endLine) is out of bounds."
+        guard original.contains(input.oldString) else {
+            // Give a helpful error with context
+            let preview = String(original.prefix(200)).replacingOccurrences(of: "\n", with: "↵")
+            return """
+                Error: old_string not found in \(url.lastPathComponent).
+                Make sure the text matches exactly including whitespace and indentation.
+                File preview (first 200 chars): \(preview)
+                """
         }
 
-        let selectedLines = Array(lines[(startLine - 1)...(endLine - 1)])
-        let numberedLines = selectedLines.enumerated().map { i, line in
-            "\(startLine + i): \(line)"
-        }
+        let updated = original.replacingFirstOccurrence(of: input.oldString, with: input.newString)
+        try updated.write(to: url, atomically: true, encoding: .utf8)
 
-        var result = "File: \(url.lastPathComponent) (\(totalLines) lines total)"
-        if startLine > 1 || endLine < totalLines {
-            result += " [showing lines \(startLine)-\(endLine)]"
+        // Build a diff-like summary
+        let oldLines = input.oldString.components(separatedBy: "\n")
+        let newLines = input.newString.components(separatedBy: "\n")
+        var diff = "Edited \(url.relativePath(from: workspacePath))\n"
+        diff += oldLines.map { "- \($0)" }.joined(separator: "\n")
+        if !input.newString.isEmpty {
+            diff += "\n" + newLines.map { "+ \($0)" }.joined(separator: "\n")
         }
-        result += "\n\n" + numberedLines.joined(separator: "\n")
-        return result
+        return diff
     }
 
     private func executeWriteFile(_ input: WriteFileInput) async throws -> String {
         let url = resolvedURL(input.path)
-        let dir = url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let existed = FileManager.default.fileExists(atPath: url.path)
         try input.content.write(to: url, atomically: true, encoding: .utf8)
-        let lineCount = input.content.components(separatedBy: "\n").count
-        return "Successfully wrote \(lineCount) lines to \(url.path)"
+        let lines = input.content.components(separatedBy: "\n").count
+        let action = existed ? "Updated" : "Created"
+        return "\(action) \(url.relativePath(from: workspacePath)) (\(lines) lines)"
     }
 
     private func executeListDirectory(_ input: ListDirectoryInput) async throws -> String {
-        let dirURL: URL
-        if let path = input.path {
-            dirURL = resolvedURL(path)
-        } else {
-            dirURL = workspacePath ?? FileManager.default.homeDirectoryForCurrentUser
-        }
+        let dirURL = input.path.map { resolvedURL($0) }
+            ?? workspacePath
+            ?? FileManager.default.homeDirectoryForCurrentUser
 
         let contents = try FileManager.default.contentsOfDirectory(
             at: dirURL,
-            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey],
+            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
-        )
-
-        let sorted = contents.sorted { a, b in
-            let aIsDir = (try? a.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            let bIsDir = (try? b.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            if aIsDir != bIsDir { return aIsDir }
+        ).sorted { a, b in
+            let aD = (try? a.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            let bD = (try? b.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if aD != bD { return aD }
             return a.lastPathComponent.lowercased() < b.lastPathComponent.lowercased()
         }
 
-        var lines = ["Directory: \(dirURL.path)", ""]
-        for url in sorted {
+        let header = dirURL.relativePath(from: workspacePath?.deletingLastPathComponent()) ?? dirURL.path
+        var lines = [header + "/"]
+        for url in contents {
             let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             if isDir {
-                lines.append("📁  \(url.lastPathComponent)/")
+                lines.append("  \(url.lastPathComponent)/")
             } else {
-                let sizeStr = formatFileSize(size)
-                lines.append("📄  \(url.lastPathComponent)  (\(sizeStr))")
+                lines.append("  \(url.lastPathComponent)  \(formatSize(size))")
             }
         }
-        lines.append("")
-        lines.append("\(sorted.count) items")
+        lines.append("(\(contents.count) items)")
         return lines.joined(separator: "\n")
     }
 
     private func executeRunShell(_ input: RunShellInput) async throws -> String {
-        let workDir: URL?
-        if let wd = input.workingDirectory {
-            workDir = resolvedURL(wd)
-        } else {
-            workDir = workspacePath
-        }
+        let workDir = input.workingDirectory.map { resolvedURL($0) } ?? workspacePath
+        let (stdout, stderr, code) = try await runProcess(command: input.command, in: workDir)
 
-        let (stdout, stderr, exitCode) = try await runProcess(
-            command: input.command,
-            workingDirectory: workDir
-        )
-
-        var result = "$ \(input.command)\n"
-        if !stdout.isEmpty {
-            result += stdout
+        var out = "$ \(input.command)"
+        let combined = (stdout + stderr).trimmingCharacters(in: .newlines)
+        if !combined.isEmpty {
+            // Truncate very long outputs
+            let maxChars = 4000
+            let truncated = combined.count > maxChars
+                ? String(combined.prefix(maxChars)) + "\n… (output truncated)"
+                : combined
+            out += "\n" + truncated
         }
-        if !stderr.isEmpty {
-            result += stderr.hasPrefix("\n") ? stderr : "\n" + stderr
-        }
-        if exitCode != 0 {
-            result += "\n[Exit code: \(exitCode)]"
-        }
-        return result.trimmingCharacters(in: .newlines)
+        if code != 0 { out += "\n[exit \(code)]" }
+        return out
     }
 
     private func executeSearchFiles(_ input: SearchFilesInput) async throws -> String {
-        let searchDir: URL
-        if let dir = input.directory {
-            searchDir = resolvedURL(dir)
-        } else {
-            searchDir = workspacePath ?? FileManager.default.homeDirectoryForCurrentUser
+        let dir = input.directory.map { resolvedURL($0) }
+            ?? workspacePath
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        let max = input.maxResults ?? 50
+        let pattern = input.pattern.replacingOccurrences(of: "'", with: "'\"'\"'")
+        var cmd = "grep -rn --include='\(input.filePattern ?? "*")' -m \(max) '\(pattern)' '\(dir.path)' 2>/dev/null | head -\(max)"
+        let (stdout, _, _) = try await runProcess(command: cmd, in: nil)
+        if stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "No matches for '\(input.pattern)'"
         }
-
-        let maxResults = input.maxResults ?? 50
-        let filePattern = input.filePattern ?? "*"
-
-        // Build grep command
-        var grepCmd = "grep -rn --include='\(filePattern)' -m \(maxResults)"
-        grepCmd += " '\(input.pattern.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
-        grepCmd += " '\(searchDir.path)'"
-        grepCmd += " 2>/dev/null | head -\(maxResults)"
-
-        let (stdout, _, _) = try await runProcess(command: grepCmd, workingDirectory: nil)
-
-        if stdout.isEmpty {
-            return "No matches found for '\(input.pattern)' in \(searchDir.lastPathComponent)"
-        }
-
-        let matches = stdout.components(separatedBy: "\n").filter { !$0.isEmpty }
-        var result = "Search results for '\(input.pattern)' in \(searchDir.path):\n\n"
-        result += matches.joined(separator: "\n")
-        if matches.count >= maxResults {
-            result += "\n\n[Results limited to \(maxResults) matches]"
-        }
-        return result
+        // Make paths relative
+        let relative = stdout.replacingOccurrences(of: dir.path + "/", with: "")
+        return "grep '\(input.pattern)' in \(dir.relativePath(from: workspacePath) ?? dir.lastPathComponent)/\n\(relative.trimmingCharacters(in: .newlines))"
     }
 
     private func executeCreateDirectory(_ input: CreateDirectoryInput) async throws -> String {
         let url = resolvedURL(input.path)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return "Created directory: \(url.path)"
+        return "Created \(url.relativePath(from: workspacePath) ?? url.path)/"
     }
 
     private func executeGetFileInfo(_ input: GetFileInfoInput) async throws -> String {
         let url = resolvedURL(input.path)
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-
         let isDir = (attrs[.type] as? FileAttributeType) == .typeDirectory
-        let size = (attrs[.size] as? Int) ?? 0
-        let modDate = attrs[.modificationDate] as? Date
-
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .medium
-
-        var info = ["Path: \(url.path)"]
-        info.append("Type: \(isDir ? "Directory" : "File")")
-        if !isDir { info.append("Size: \(formatFileSize(size))") }
-        if let date = modDate { info.append("Modified: \(formatter.string(from: date))") }
-        info.append("Extension: \(url.pathExtension.isEmpty ? "none" : url.pathExtension)")
-
-        return info.joined(separator: "\n")
+        var lines = ["\(url.relativePath(from: workspacePath) ?? url.path)"]
+        lines.append("Type: \(isDir ? "directory" : "file")")
+        if !isDir, let size = attrs[.size] as? Int { lines.append("Size: \(formatSize(size))") }
+        if let date = attrs[.modificationDate] as? Date {
+            lines.append("Modified: \(date.formatted(date: .abbreviated, time: .shortened))")
+        }
+        if !isDir {
+            let content = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            lines.append("Lines: \(content.components(separatedBy: "\n").count)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Helpers
 
-    private func runProcess(command: String, workingDirectory: URL?) async throws -> (String, String, Int32) {
-        return try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = ["-c", command]
-            process.currentDirectoryURL = workingDirectory
-
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
-            process.standardOutput = stdoutPipe
-            process.standardError = stderrPipe
-
-            process.terminationHandler = { proc in
-                let stdout = String(
-                    data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(),
-                    encoding: .utf8) ?? ""
-                let stderr = String(
-                    data: stderrPipe.fileHandleForReading.readDataToEndOfFile(),
-                    encoding: .utf8) ?? ""
-                continuation.resume(returning: (stdout, stderr, proc.terminationStatus))
+    func runProcess(command: String, in directory: URL?) async throws -> (String, String, Int32) {
+        try await withCheckedThrowingContinuation { continuation in
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/sh")
+            p.arguments = ["-c", command]
+            p.currentDirectoryURL = directory
+            let out = Pipe(), err = Pipe()
+            p.standardOutput = out; p.standardError = err
+            p.terminationHandler = { proc in
+                let o = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                let e = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                continuation.resume(returning: (o, e, proc.terminationStatus))
             }
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-            }
+            do { try p.run() } catch { continuation.resume(throwing: error) }
         }
     }
 
-    private func formatFileSize(_ bytes: Int) -> String {
-        let kb = 1024
-        let mb = kb * 1024
-        let gb = mb * 1024
-        if bytes >= gb { return String(format: "%.2f GB", Double(bytes) / Double(gb)) }
+    private func formatSize(_ bytes: Int) -> String {
+        let kb = 1024, mb = kb * 1024, gb = mb * 1024
+        if bytes >= gb { return String(format: "%.1f GB", Double(bytes) / Double(gb)) }
         if bytes >= mb { return String(format: "%.1f MB", Double(bytes) / Double(mb)) }
-        if bytes >= kb { return String(format: "%.0f KB", Double(bytes) / Double(kb)) }
+        if bytes >= kb { return String(format: "%d KB", bytes / kb) }
         return "\(bytes) B"
+    }
+}
+
+// MARK: - URL helpers
+
+extension URL {
+    func relativePath(from base: URL?) -> String? {
+        guard let base else { return lastPathComponent }
+        let myParts = pathComponents
+        let baseParts = base.pathComponents
+        guard myParts.starts(with: baseParts) else { return lastPathComponent }
+        return myParts.dropFirst(baseParts.count).joined(separator: "/")
+    }
+}
+
+// MARK: - String helpers
+
+extension String {
+    func replacingFirstOccurrence(of target: String, with replacement: String) -> String {
+        guard let range = self.range(of: target) else { return self }
+        return self.replacingCharacters(in: range, with: replacement)
     }
 }

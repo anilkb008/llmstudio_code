@@ -16,81 +16,65 @@ struct CodingAgentView: View {
                 workspacePath: Binding(
                     get: { agent.workspacePath },
                     set: { url in
-                        if let url {
-                            agent.setWorkspace(url)
-                        }
+                        if let url { agent.setWorkspace(url) }
                     }
                 ),
                 onFileSelected: { url in
-                    agent.sendMessage("Read the file at: \(url.path)")
+                    agent.sendMessage("Read the file `\(url.lastPathComponent)` at path: \(url.path)")
                 }
             )
-            .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 340)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
         } detail: {
-            // DETAIL: Chat + Input
             VStack(spacing: 0) {
-                // Top toolbar
-                agentToolbar
+                // Top bar
+                topBar
 
                 Divider()
 
                 // Conversation
-                ConversationView(
-                    messages: agent.messages,
-                    isRunning: agent.running
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ConversationView(messages: agent.messages, isRunning: agent.running)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                // Input area
+                // Input
                 AgentInputView(
                     inputText: $inputText,
                     isRunning: agent.running,
                     workspacePath: agent.workspacePath,
-                    onSend: {
-                        agent.sendMessage(inputText)
-                        inputText = ""
-                    },
-                    onCancel: {
-                        agent.cancelGeneration()
-                    }
+                    onSend: { agent.sendMessage(inputText); inputText = "" },
+                    onCancel: { agent.cancelGeneration() }
                 )
             }
             .navigationTitle("")
             .toolbar {
-                // Model info in toolbar center
                 ToolbarItem(placement: .principal) {
-                    modelStatusView
+                    modelPill
                 }
-
-                // Right toolbar items
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button {
                         showingLLMEval = true
                     } label: {
                         Label("LLM Eval", systemImage: "waveform")
                     }
-                    .help("Open LLM Eval view")
+                    .help("Open LLM Eval (single prompt mode)")
 
                     Button {
                         showingClearConfirm = true
                     } label: {
-                        Label("Clear", systemImage: "trash")
+                        Label("New Chat", systemImage: "square.and.pencil")
                     }
-                    .help("Clear conversation")
+                    .help("Start a new conversation")
                     .disabled(agent.messages.isEmpty)
                 }
             }
             .confirmationDialog(
-                "Clear Conversation",
+                "Start New Chat?",
                 isPresented: $showingClearConfirm,
                 titleVisibility: .visible
             ) {
-                Button("Clear", role: .destructive) {
-                    agent.clearConversation()
-                }
+                Button("Clear & Start New", role: .destructive) { agent.clearConversation() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This will erase all messages and start a new conversation.")
+                Text("This will erase all messages and reset the conversation.")
             }
             .sheet(isPresented: $showingLLMEval) {
                 NavigationStack {
@@ -122,55 +106,92 @@ struct CodingAgentView: View {
                 agent.messages.append(
                     AgentMessage(
                         role: .assistant,
-                        content: "⚠️ Failed to load model: \(error.localizedDescription)"
-                    )
-                )
+                        content: "⚠️ Failed to load model: \(error.localizedDescription)\n\nCheck your internet connection and try restarting the app."
+                    ))
             }
         }
     }
 
-    // MARK: - Subviews
+    // MARK: - Top Bar
 
-    private var agentToolbar: some View {
-        HStack(spacing: 10) {
-            // Agent branding
-            HStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .fill(Color.accentColor.opacity(0.15))
-                        .frame(width: 28, height: 28)
-                    Image(systemName: "cpu")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Color.accentColor)
-                }
+    private var topBar: some View {
+        HStack(spacing: 12) {
+            // Branding
+            HStack(spacing: 7) {
+                Image(systemName: "cpu.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
                 Text("Coding Agent")
-                    .font(.headline)
+                    .font(.system(size: 14, weight: .semibold))
+            }
+
+            Divider().frame(height: 16)
+
+            // Workspace chip
+            if let ws = agent.workspacePath {
+                HStack(spacing: 4) {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.blue)
+                    Text(ws.lastPathComponent)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.blue.opacity(0.08), in: Capsule())
             }
 
             Spacer()
 
+            // Session stats
+            if agent.totalToolCalls > 0 {
+                statsChip(
+                    icon: "wrench.and.screwdriver",
+                    label: "\(agent.totalToolCalls) tool\(agent.totalToolCalls == 1 ? "" : "s")"
+                )
+            }
+            if agent.totalTokensGenerated > 0 {
+                statsChip(
+                    icon: "text.word.spacing",
+                    label: "\(agent.totalTokensGenerated) tokens"
+                )
+            }
+
             // Running indicator
             if agent.running {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Generating…")
-                        .font(.caption)
+                HStack(spacing: 5) {
+                    ProgressView().controlSize(.mini)
+                    Text("Working…")
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 7)
     }
 
-    private var modelStatusView: some View {
-        HStack(spacing: 6) {
+    private func statsChip(icon: String, label: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 9))
+            Text(label)
+                .font(.system(size: 11))
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Color.secondary.opacity(0.08), in: Capsule())
+    }
+
+    private var modelPill: some View {
+        HStack(spacing: 5) {
             Circle()
                 .fill(agent.running ? Color.orange : Color.green)
-                .frame(width: 7, height: 7)
-            Text(agent.modelInfo.isEmpty ? "Loading…" : agent.modelInfo)
-                .font(.caption)
+                .frame(width: 6, height: 6)
+            Text(agent.modelInfo.isEmpty ? "Loading model…" : agent.modelInfo)
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }

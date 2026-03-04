@@ -20,12 +20,16 @@ class CodingAgentViewModel {
     var totalSize: String?
     var workspacePath: URL?
 
+    // Session stats for the status bar
+    var totalToolCalls = 0
+    var totalTokensGenerated = 0
+
     // MARK: - Model Config
 
     var modelConfiguration = LLMRegistry.qwen3_8b_4bit
 
     var generateParameters: GenerateParameters {
-        GenerateParameters(maxTokens: 4096, temperature: 0.6)
+        GenerateParameters(maxTokens: 8192, temperature: 0.5)
     }
 
     // MARK: - Private State
@@ -35,33 +39,52 @@ class CodingAgentViewModel {
     private var toolExecutor: CodingToolExecutor
     private var llmHistory: [Chat.Message] = []
 
+    // MARK: - System Prompt (Claude Code style)
+
     private static let systemPromptTemplate = """
-        You are a highly capable coding agent, similar to Claude Code. You help users with software engineering tasks by reading, writing, and modifying files, running shell commands, searching code, and providing expert analysis.
+        You are a highly skilled autonomous coding agent, similar to Claude Code. You have direct access to the file system and shell, and you help users complete software engineering tasks end-to-end.
 
-        You have access to these tools:
-        - read_file: Read file contents (always read before modifying!)
-        - write_file: Create or overwrite files
-        - list_directory: Explore directory structure
-        - run_shell_command: Execute shell commands (build, test, git, etc.)
-        - search_files: Search for patterns across files
-        - create_directory: Create directories
-        - get_file_info: Get file metadata
+        ## Core Behaviors
 
-        Guidelines:
-        1. Always read existing files before modifying them
-        2. Make targeted, minimal changes that solve the problem
-        3. Run tests or builds after making changes when appropriate
-        4. Explain what you're doing and why at each step
-        5. If a tool call fails, try an alternative approach
-        6. For complex tasks, break them into smaller steps
+        1. **Be autonomous** — Don't ask clarifying questions when you can use tools to find the answer yourself. Explore the codebase, read files, and act.
+        2. **Read before writing** — Always call `read_file` before modifying an existing file. Never assume you know the content.
+        3. **Prefer `edit_file` over `write_file`** — For existing files, use `edit_file` with exact text replacement. Only use `write_file` to create brand-new files.
+        4. **Verify your work** — After making code changes, run `run_shell_command` to build or test (e.g. `swift build`, `npm test`, `python -m pytest`).
+        5. **Minimal changes** — Make the smallest change that solves the problem. Don't refactor unrelated code unless asked.
+        6. **Explain briefly** — Before using a tool, say what you're about to do in one short sentence.
 
-        WORKSPACE: {workspace}
+        ## Available Tools
+
+        | Tool | When to use |
+        |------|-------------|
+        | `read_file` | Read file content. Use `start_line`/`end_line` for large files. |
+        | `edit_file` | Replace exact text in a file. `old_string` must match exactly (whitespace included). |
+        | `write_file` | Create a new file or completely overwrite (use sparingly on existing files). |
+        | `run_shell_command` | Run bash: build, test, git, grep, find, ls, etc. |
+        | `list_directory` | List directory contents. Good first step when exploring. |
+        | `search_files` | grep across files. Find functions, usages, imports, etc. |
+        | `create_directory` | Create a directory tree. |
+        | `get_file_info` | File metadata: size, line count, modification date. |
+
+        ## Workflow
+
+        For any coding task:
+        1. Explore first — `list_directory` or `search_files` to understand the codebase
+        2. Read relevant files — understand context before changing anything
+        3. Plan the change — think about what exactly needs to change
+        4. Implement — use `edit_file` for precise edits, or `write_file` for new files
+        5. Verify — build/test to confirm nothing broke
+        6. Summarize — tell the user what you changed and why
+
+        ## Session Context
+
+        Workspace: {workspace}
+        Platform: macOS
+        Shell: /bin/sh
         """
 
     enum LoadState {
-        case idle
-        case loading
-        case loaded(ModelContainer)
+        case idle, loading, loaded(ModelContainer)
     }
 
     var isLoading: Bool {
@@ -82,21 +105,26 @@ class CodingAgentViewModel {
         workspacePath = url
         toolExecutor.workspacePath = url
         resetHistory()
+
+        // Auto-explore: immediately list the workspace like Claude Code does
         let notice = AgentMessage(
             role: .assistant,
-            content: "Workspace set to `\(url.lastPathComponent)`. I can now read and write files in this directory. What would you like to work on?"
+            content: "Workspace: **\(url.path)**"
         )
         messages.append(notice)
+
+        sendMessage("List the workspace directory and give me a brief overview of the project structure.")
     }
 
     private func resetHistory() {
-        let workspace = workspacePath?.path ?? "No workspace selected — ask user to open a folder"
-        let systemPrompt = Self.systemPromptTemplate.replacingOccurrences(of: "{workspace}", with: workspace)
-        llmHistory = [.system(systemPrompt)]
+        let ws = workspacePath?.path ?? "not set — user has not opened a folder yet"
+        llmHistory = [.system(Self.systemPromptTemplate.replacingOccurrences(of: "{workspace}", with: ws))]
     }
 
     func clearConversation() {
         messages.removeAll()
+        totalToolCalls = 0
+        totalTokensGenerated = 0
         resetHistory()
     }
 
@@ -122,50 +150,49 @@ class CodingAgentViewModel {
         running = false
         if let idx = messages.indices.last, messages[idx].isStreaming {
             messages[idx].isStreaming = false
-            messages[idx].content += "\n\n*[Generation cancelled]*"
+            if messages[idx].content.isEmpty {
+                messages[idx].content = "*[cancelled]*"
+            }
         }
     }
 
-    // MARK: - Agent Turn
+    // MARK: - Agent Turn (agentic loop)
 
     private func runAgentTurn() async {
         do {
             let modelContainer = try await load()
+
             var assistantMessage = AgentMessage(role: .assistant, isStreaming: true)
             messages.append(assistantMessage)
             let assistantId = assistantMessage.id
 
-            // Agentic loop: generate → tool call → continue until no more tool calls
+            // Loop: generate → tool call → continue, until model gives final answer
             var continueLoop = true
             while continueLoop {
-                continueLoop = await streamResponse(
+                if Task.isCancelled { break }
+                continueLoop = await streamSegment(
                     modelContainer: modelContainer,
                     assistantMessageId: assistantId
                 )
             }
 
-            // Mark streaming done
+            // Mark streaming complete
             if let idx = messages.firstIndex(where: { $0.id == assistantId }) {
                 messages[idx].isStreaming = false
-                // Append final assistant text to LLM history
-                let finalText = messages[idx].content
-                if !finalText.isEmpty {
-                    llmHistory.append(.assistant(finalText))
-                }
             }
 
         } catch {
-            let errorMsg = AgentMessage(
+            let errMsg = AgentMessage(
                 role: .assistant,
-                content: "⚠️ Error: \(error.localizedDescription)"
+                content: "⚠️ \(error.localizedDescription)"
             )
-            messages.append(errorMsg)
+            messages.append(errMsg)
         }
     }
 
-    /// Streams tokens into the assistant message. Returns `true` if a tool call was made
-    /// (meaning caller should loop again), `false` when done.
-    private func streamResponse(modelContainer: ModelContainer, assistantMessageId: UUID) async -> Bool {
+    /// Stream one generation segment. Returns `true` if a tool call was made (loop should continue).
+    /// Each call adds its output to `llmHistory` before returning.
+    private func streamSegment(modelContainer: ModelContainer, assistantMessageId: UUID) async -> Bool {
         let userInput = UserInput(
             chat: llmHistory,
             tools: toolExecutor.allToolSchemas,
@@ -175,14 +202,13 @@ class CodingAgentViewModel {
         do {
             MLXRandom.seed(UInt64(Date.timeIntervalSinceReferenceDate * 1000))
             let lmInput = try await modelContainer.prepare(input: userInput)
-            let stream = try await modelContainer.generate(
-                input: lmInput, parameters: generateParameters)
+            let stream = try await modelContainer.generate(input: lmInput, parameters: generateParameters)
 
-            var accumulatedText = ""
+            var segmentText = ""
             var pendingToolCall: ToolCall?
 
-            var iterator = stream.makeAsyncIterator()
-            while let token = await iterator.next() {
+            var iter = stream.makeAsyncIterator()
+            while let token = await iter.next() {
                 if Task.isCancelled { return false }
 
                 if let toolCall = token.toolCall {
@@ -190,54 +216,59 @@ class CodingAgentViewModel {
                     break
                 }
                 if let chunk = token.chunk, !chunk.isEmpty {
-                    accumulatedText += chunk
+                    segmentText += chunk
+                    totalTokensGenerated += 1
+                    // Append to the UI message (cumulative across all segments)
                     if let idx = messages.firstIndex(where: { $0.id == assistantMessageId }) {
-                        messages[idx].content = accumulatedText
+                        messages[idx].content += chunk
                     }
                 }
             }
 
-            if let toolCall = pendingToolCall {
-                await handleToolCall(toolCall, assistantMessageId: assistantMessageId)
-                return true  // loop again after tool call
+            // Add this segment's text to LLM history
+            if !segmentText.isEmpty {
+                llmHistory.append(.assistant(segmentText))
             }
-            return false  // no tool call, done
+
+            // Handle tool call
+            if let toolCall = pendingToolCall {
+                await executeToolCall(toolCall, assistantMessageId: assistantMessageId)
+                return true
+            }
+            return false
 
         } catch {
             if let idx = messages.firstIndex(where: { $0.id == assistantMessageId }) {
-                messages[idx].content += "\n\n⚠️ Generation error: \(error.localizedDescription)"
+                messages[idx].content += "\n\n⚠️ \(error.localizedDescription)"
             }
             return false
         }
     }
 
-    private func handleToolCall(_ toolCall: ToolCall, assistantMessageId: UUID) async {
-        let toolName = toolCall.function.name
-        let toolArgs = toolCall.function.arguments ?? "{}"
+    private func executeToolCall(_ toolCall: ToolCall, assistantMessageId: UUID) async {
+        let name = toolCall.function.name
+        let args = toolCall.function.arguments ?? "{}"
 
-        // Add tool call record to the assistant message in UI
-        var toolCallRecord = AgentToolCall(
-            name: toolName,
-            arguments: toolArgs,
-            isExecuting: true
-        )
+        totalToolCalls += 1
 
+        // Show tool call in UI
+        let record = AgentToolCall(name: name, arguments: args, isExecuting: true)
         if let idx = messages.firstIndex(where: { $0.id == assistantMessageId }) {
-            messages[idx].toolCalls.append(toolCallRecord)
+            messages[idx].toolCalls.append(record)
         }
 
-        // Execute the tool
-        let result = await toolExecutor.execute(name: toolName, arguments: toolArgs)
+        // Execute
+        let result = await toolExecutor.execute(name: name, arguments: args)
 
-        // Update tool call record with result
+        // Update UI with result
         if let msgIdx = messages.firstIndex(where: { $0.id == assistantMessageId }),
-            let toolIdx = messages[msgIdx].toolCalls.firstIndex(where: { $0.id == toolCallRecord.id })
+            let toolIdx = messages[msgIdx].toolCalls.firstIndex(where: { $0.id == record.id })
         {
             messages[msgIdx].toolCalls[toolIdx].result = result
             messages[msgIdx].toolCalls[toolIdx].isExecuting = false
         }
 
-        // Add tool result to LLM history so model can continue with context
+        // Add tool result to LLM context
         llmHistory.append(.tool(result))
     }
 
@@ -246,131 +277,70 @@ class CodingAgentViewModel {
     func load() async throws -> ModelContainer {
         while true {
             switch loadState {
-            case .idle:
-                return try await performLoad()
-            case .loading:
-                try await Task.sleep(for: .milliseconds(100))
-            case .loaded(let container):
-                return container
+            case .idle: return try await performLoad()
+            case .loading: try await Task.sleep(for: .milliseconds(100))
+            case .loaded(let c): return c
             }
         }
     }
 
     private func performLoad() async throws -> ModelContainer {
         loadState = .loading
-        modelInfo = "Preparing model..."
+        modelInfo = "Preparing…"
         downloadProgress = 0.0
-
         Memory.cacheLimit = 20 * 1024 * 1024
 
         let hub = HubApi(
-            downloadBase: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-        )
+            downloadBase: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first)
 
         do {
-            let modelDirectory = try await downloadModel(
-                hub: hub,
-                configuration: modelConfiguration
-            ) { [weak self] progress in
-                Task { @MainActor in
-                    self?.updateDownloadProgress(progress)
-                }
+            let modelDir = try await downloadModel(hub: hub, configuration: modelConfiguration) {
+                [weak self] p in
+                Task { @MainActor in self?.updateProgress(p) }
             }
 
-            let fileManager = FileManager.default
-            let contents = (try? fileManager.contentsOfDirectory(atPath: modelDirectory.path)) ?? []
-            guard fileManager.fileExists(atPath: modelDirectory.path),
-                contents.contains(where: { $0.hasSuffix(".safetensors") })
-            else {
-                throw NSError(
-                    domain: "CodingAgent", code: -1,
-                    userInfo: [
-                        NSLocalizedDescriptionKey:
-                            "Model download failed. Check network connection."
-                    ])
+            // Validate download
+            let contents = (try? FileManager.default.contentsOfDirectory(atPath: modelDir.path)) ?? []
+            guard contents.contains(where: { $0.hasSuffix(".safetensors") }) else {
+                throw NSError(domain: "CodingAgent", code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "Model download incomplete."])
             }
 
-            modelInfo = "Loading model into memory..."
-            downloadProgress = nil
-            totalSize = nil
+            modelInfo = "Loading weights…"
+            downloadProgress = nil; totalSize = nil
 
-            let modelContainer = try await LLMModelFactory.shared.loadContainer(
-                hub: hub,
-                configuration: modelConfiguration
-            ) { _ in }
+            let container = try await LLMModelFactory.shared.loadContainer(
+                hub: hub, configuration: modelConfiguration) { _ in }
 
-            let numParams = await modelContainer.perform { $0.model.numParameters() }
-            let shortName =
-                modelConfiguration.name.components(separatedBy: "/").last
-                ?? modelConfiguration.name
-            let paramM = numParams / (1024 * 1024)
-            let paramStr =
-                paramM >= 1000
-                ? String(format: "%.1fB params", Double(paramM) / 1000.0) : "\(paramM)M params"
-            modelInfo = "\(shortName) · \(paramStr)"
+            let n = await container.perform { $0.model.numParameters() }
+            let shortName = modelConfiguration.name.components(separatedBy: "/").last ?? modelConfiguration.name
+            let pm = n / (1024 * 1024)
+            modelInfo = "\(shortName) · \(pm >= 1000 ? String(format: "%.1fB", Double(pm)/1000) : "\(pm)M") params"
 
-            loadState = .loaded(modelContainer)
+            loadState = .loaded(container)
 
-            // Welcome message once model is ready
-            let welcome = AgentMessage(
+            messages.append(AgentMessage(
                 role: .assistant,
-                content: "Model ready! I'm your coding agent powered by **\(shortName)**.\n\nOpen a workspace folder to get started, then describe what you'd like to build or fix."
-            )
-            messages.append(welcome)
-
-            return modelContainer
+                content: "**\(shortName)** ready. Open a workspace folder to start coding, or ask me anything."
+            ))
+            return container
 
         } catch {
-            loadState = .idle
-            downloadProgress = nil
-            totalSize = nil
+            loadState = .idle; downloadProgress = nil; totalSize = nil
             throw error
         }
     }
 
-    private func updateDownloadProgress(_ progress: Progress) {
-        let name =
-            modelConfiguration.name.components(separatedBy: "/").last ?? modelConfiguration.name
-        modelInfo = "Downloading \(name) (\(Int(progress.fractionCompleted * 100))%)"
-        downloadProgress = progress.fractionCompleted
-
-        if progress.totalUnitCount > 0 && progress.totalUnitCount < 100 {
-            totalSize = "File \(progress.completedUnitCount + 1) of \(progress.totalUnitCount)"
-        } else if progress.totalUnitCount > 0 {
-            let fmt = ByteCountFormatter()
-            fmt.allowedUnits = [.useMB, .useGB]
-            fmt.countStyle = .file
-            totalSize =
-                "\(fmt.string(fromByteCount: progress.completedUnitCount)) of \(fmt.string(fromByteCount: progress.totalUnitCount))"
-        }
-    }
-
-    // MARK: - File Explorer
-
-    func loadFileTree(from url: URL) -> [FileEntry] {
-        guard
-            let contents = try? FileManager.default.contentsOfDirectory(
-                at: url,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            )
-        else { return [] }
-
-        let sorted = contents.sorted { a, b in
-            let aDir = (try? a.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            let bDir = (try? b.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            if aDir != bDir { return aDir }
-            return a.lastPathComponent.lowercased() < b.lastPathComponent.lowercased()
-        }
-
-        return sorted.map { fileURL in
-            let isDir =
-                (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            return FileEntry(
-                name: fileURL.lastPathComponent,
-                url: fileURL,
-                isDirectory: isDir
-            )
+    private func updateProgress(_ p: Progress) {
+        let name = modelConfiguration.name.components(separatedBy: "/").last ?? modelConfiguration.name
+        modelInfo = "Downloading \(name) (\(Int(p.fractionCompleted * 100))%)"
+        downloadProgress = p.fractionCompleted
+        if p.totalUnitCount > 0 && p.totalUnitCount < 100 {
+            totalSize = "File \(p.completedUnitCount + 1) of \(p.totalUnitCount)"
+        } else if p.totalUnitCount > 0 {
+            let f = ByteCountFormatter()
+            f.allowedUnits = [.useMB, .useGB]; f.countStyle = .file
+            totalSize = "\(f.string(fromByteCount: p.completedUnitCount)) of \(f.string(fromByteCount: p.totalUnitCount))"
         }
     }
 }
