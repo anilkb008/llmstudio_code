@@ -69,7 +69,8 @@ struct AgentToolCall: Identifiable {
         case "write_file": return "Write File"
         case "list_directory": return "List Directory"
         case "run_shell_command": return "Bash"
-        case "search_files": return "Search"
+        case "run_tests":         return "Run Tests"
+        case "search_files":      return "Search"
         case "create_directory": return "Create Directory"
         case "get_file_info": return "File Info"
         default: return name.replacingOccurrences(of: "_", with: " ").capitalized
@@ -78,15 +79,16 @@ struct AgentToolCall: Identifiable {
 
     var icon: String {
         switch name {
-        case "read_file": return "doc.text"
-        case "edit_file": return "pencil.and.list.clipboard"
-        case "write_file": return "doc.badge.plus"
-        case "list_directory": return "folder"
-        case "run_shell_command": return "terminal"
-        case "search_files": return "magnifyingglass"
+        case "read_file":        return "doc.text"
+        case "edit_file":        return "pencil.and.list.clipboard"
+        case "write_file":       return "doc.badge.plus"
+        case "list_directory":   return "folder"
+        case "run_shell_command":return "terminal"
+        case "run_tests":        return "checkmark.circle"
+        case "search_files":     return "magnifyingglass"
         case "create_directory": return "folder.badge.plus"
-        case "get_file_info": return "info.circle"
-        default: return "wrench.and.screwdriver"
+        case "get_file_info":    return "info.circle"
+        default:                 return "wrench.and.screwdriver"
         }
     }
 

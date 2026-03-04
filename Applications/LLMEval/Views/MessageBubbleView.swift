@@ -146,10 +146,12 @@ struct ToolCallRow: View {
                             Label("Output", systemImage: "arrow.left")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(.secondary)
-                            // Diff highlighting for edit_file
-                            if toolCall.name == "edit_file" {
+                            switch toolCall.name {
+                            case "edit_file":
                                 DiffView(content: result)
-                            } else {
+                            case "run_shell_command", "run_tests":
+                                DiagnosticOutputView(content: result)
+                            default:
                                 TerminalText(result, maxLines: 30)
                             }
                         }
@@ -176,12 +178,13 @@ struct ToolCallRow: View {
     private var toolCallColor: Color {
         switch toolCall.name {
         case "run_shell_command": return .orange
-        case "edit_file": return .purple
-        case "write_file": return .blue
-        case "read_file": return .teal
-        case "search_files": return .yellow
-        case "list_directory": return .indigo
-        default: return .secondary
+        case "run_tests":         return .green
+        case "edit_file":         return .purple
+        case "write_file":        return .blue
+        case "read_file":         return .teal
+        case "search_files":      return .yellow
+        case "list_directory":    return .indigo
+        default:                  return .secondary
         }
     }
 
@@ -189,10 +192,10 @@ struct ToolCallRow: View {
         guard let data = toolCall.arguments.data(using: .utf8),
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return "" }
-        // Show the most meaningful argument
         if let path = obj["path"] as? String { return path }
-        if let cmd = obj["command"] as? String { return String(cmd.prefix(60)) }
-        if let pat = obj["pattern"] as? String { return "'\(pat)'" }
+        if let cmd  = obj["command"] as? String { return String(cmd.prefix(60)) }
+        if let pat  = obj["pattern"] as? String { return "'\(pat)'" }
+        if let tgt  = obj["test_target"] as? String { return tgt }
         return ""
     }
 
@@ -288,6 +291,103 @@ struct DiffView: View {
                 return DiffLine(offset: i, text: line, color: .clear,
                     textColor: .secondary, background: .clear)
             }
+        }
+    }
+}
+
+// MARK: - Diagnostic Output View (shell / test output with error highlighting)
+
+struct DiagnosticOutputView: View {
+    let content: String
+
+    private enum LineKind { case error, warning, note, passed, failed, normal }
+
+    private struct DiagLine: Identifiable {
+        let id: Int
+        let text: String
+        let kind: LineKind
+    }
+
+    private static let errorPattern   = try? NSRegularExpression(pattern: #"(?i)(error:|✗|FAIL|FAILED|fatal error|Assertion failed|assert|Exception|Traceback|SyntaxError|TypeError|NameError|KeyError|AttributeError|ModuleNotFoundError|\[exit [^0])"#)
+    private static let warningPattern = try? NSRegularExpression(pattern: #"(?i)(warning:|WARN|deprecated)"#)
+    private static let notePattern    = try? NSRegularExpression(pattern: #"(?i)(note:|hint:)"#)
+    private static let passPattern    = try? NSRegularExpression(pattern: #"(?i)(passed|✓|✔|OK|Test Suite .+ passed|All tests passed|BUILD SUCCEEDED)"#)
+
+    private func classify(_ line: String) -> LineKind {
+        let r = NSRange(line.startIndex..., in: line)
+        if Self.errorPattern?.firstMatch(in: line, range: r)   != nil { return .error }
+        if Self.warningPattern?.firstMatch(in: line, range: r) != nil { return .warning }
+        if Self.notePattern?.firstMatch(in: line, range: r)    != nil { return .note }
+        if Self.passPattern?.firstMatch(in: line, range: r)    != nil { return .passed }
+        return .normal
+    }
+
+    private var lines: [DiagLine] {
+        let rawLines = content.components(separatedBy: "\n")
+        let max = 120
+        let shown = rawLines.count > max ? Array(rawLines.prefix(max)) : rawLines
+        return shown.enumerated().map { i, l in DiagLine(id: i, text: l, kind: classify(l)) }
+    }
+
+    var body: some View {
+        ScrollView([.vertical, .horizontal], showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(lines) { line in
+                    HStack(spacing: 0) {
+                        // Color band
+                        Rectangle()
+                            .fill(bandColor(line.kind))
+                            .frame(width: 3)
+                        Text(line.text.isEmpty ? " " : line.text)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(textColor(line.kind))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 0.5)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(bgColor(line.kind))
+                    }
+                }
+                if content.components(separatedBy: "\n").count > 120 {
+                    Text("… (\(content.components(separatedBy: "\n").count - 120) more lines)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 9)
+                }
+            }
+        }
+        .frame(maxHeight: 320)
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .textSelection(.enabled)
+    }
+
+    private func bandColor(_ k: LineKind) -> Color {
+        switch k {
+        case .error:   return .red
+        case .warning: return .yellow
+        case .note:    return .blue
+        case .passed:  return .green
+        case .failed:  return .red
+        case .normal:  return .clear
+        }
+    }
+    private func textColor(_ k: LineKind) -> Color {
+        switch k {
+        case .error:   return .red
+        case .warning: return Color(red: 0.9, green: 0.7, blue: 0)
+        case .note:    return .blue
+        case .passed:  return .green
+        case .failed:  return .red
+        case .normal:  return .primary
+        }
+    }
+    private func bgColor(_ k: LineKind) -> Color {
+        switch k {
+        case .error:   return .red.opacity(0.07)
+        case .warning: return .yellow.opacity(0.05)
+        case .note:    return .blue.opacity(0.05)
+        case .passed:  return .green.opacity(0.05)
+        case .failed:  return .red.opacity(0.07)
+        case .normal:  return .clear
         }
     }
 }
