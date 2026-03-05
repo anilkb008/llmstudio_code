@@ -265,7 +265,13 @@ class CodingAgentViewModel {
 
     private func doToolCall(_ tc: ToolCall, msgId: UUID) async {
         let name = tc.function.name
-        let args = tc.function.arguments ?? "{}"
+        let args: String
+        if let data = try? JSONEncoder().encode(tc.function.arguments),
+           let str = String(data: data, encoding: .utf8) {
+            args = str
+        } else {
+            args = "{}"
+        }
         totalToolCalls += 1
 
         let record = AgentToolCall(name: name, arguments: args, isExecuting: true)
