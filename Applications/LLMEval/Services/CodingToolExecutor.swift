@@ -260,7 +260,7 @@ class CodingToolExecutor {
 
         let fm = FileManager.default
         let at: (String) -> Bool = { fm.fileExists(atPath: ws.appendingPathComponent($0).path) }
-        let glob: (String) -> Bool = {
+        let glob: (String) -> Bool = {_ in 
             (try? fm.contentsOfDirectory(atPath: ws.path))?.contains(where: { $0.hasSuffix($0) }) ?? false
         }
 
@@ -379,7 +379,12 @@ class CodingToolExecutor {
     }
 
     private func executeRunTests(_ input: RunTestsInput) async throws -> String {
-        let info = projectInfo ?? (await detectProject())
+        let info: ProjectInfo
+        if let existing = projectInfo {
+            info = existing
+        } else {
+            info = await detectProject()
+        }
         var cmd = info.testCommand
 
         // Append target/filter if provided
