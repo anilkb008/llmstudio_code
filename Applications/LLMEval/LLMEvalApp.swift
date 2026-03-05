@@ -6,8 +6,8 @@ import SwiftUI
 struct LLMEvalApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environment(DeviceStat())
+            CodingAgentView()
         }
+        .defaultSize(width: 1100, height: 740)
     }
 }
